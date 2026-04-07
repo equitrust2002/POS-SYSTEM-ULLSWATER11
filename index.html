@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>OmniPOS v24 - iPhone Chrome</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root {
+            --bg: #000; --surface: #1c1c1e; --accent: #32d74b; --text: #fff; 
+            --border: #38383a; --danger: #ff453a; --safe-bottom: env(safe-area-inset-bottom);
+        }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, sans-serif; touch-action: manipulation; }
+        body { background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Navigation Bar */
+        .nav-bar { height: 70px; background: var(--surface); display: flex; justify-content: space-around; align-items: center; border-bottom: 1px solid var(--border); padding-top: 10px; z-index: 100; }
+        .nav-item { font-size: 11px; text-align: center; color: #8e8e93; font-weight: 600; }
+        .nav-item.active { color: var(--accent); }
+        .nav-item i { font-size: 24px; display: block; margin-bottom: 4px; }
+
+        /* Main Screen Views */
+        .view { display: none; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 15px; }
+        .view.active { display: flex; flex-direction: column; }
+
+        /* Grid System */
+        .product-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .p-card { background: var(--surface); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); position: relative; height: 120px; }
+        .p-card img { width: 100%; height: 65px; object-fit: cover; }
+        .p-info { padding: 5px; font-size: 10px; text-align: center; line-height: 1.2; }
+        .p-stock { position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.7); color: var(--accent); font-size: 9px; padding: 2px 5px; border-radius: 4px; }
+
+        /* Tables */
+        .table-wrap { width: 100%; overflow-x: auto; border-radius: 12px; background: var(--surface); }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 450px; }
+        th { background: #2c2c2e; padding: 12px; text-align: left; color: var(--accent); }
+        td { padding: 12px; border-bottom: 1px solid var(--border); }
+
+        /* Cart Drawer */
+        .drawer { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-radius: 20px 20px 0 0; z-index: 500; transform: translateY(calc(100% - 65px)); transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1); border-top: 1px solid var(--border); }
+        .drawer.open { transform: translateY(0); }
+        .drawer-head { height: 65px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-weight: 800; border-bottom: 1px solid var(--border); }
+        .drawer-content { height: 400px; padding: 15px; display: flex; flex-direction: column; }
+
+        /* Inputs & Buttons */
+        .input-box { background: #2c2c2e; border: 1px solid var(--border); color: #fff; width: 100%; padding: 12px; border-radius: 10px; margin-bottom: 10px; font-size: 16px; }
+        .btn-prime { background: var(--accent); color: #000; border: none; padding: 16px; border-radius: 12px; font-weight: 800; width: 100%; font-size: 16px; }
+        .btn-sec { background: #2c2c2e; color: #fff; border: 1px solid var(--border); padding: 10px; border-radius: 8px; font-size: 12px; }
+
+        /* Full Screen Scanner Overlay */
+        #scan-overlay { position: fixed; inset: 0; background: #000; z-index: 2000; display: none; flex-direction: column; }
+        #reader { flex: 1; }
+        .scan-controls { height: 100px; background: var(--surface); display: flex; align-items: center; justify-content: center; padding-bottom: var(--safe-bottom); }
+
+        /* Print Template */
+        #print-area { display: none; }
+        @media print {
+            body * { visibility: hidden; }
+            #print-area, #print-area * { visibility: visible; }
+            #print-area { position: absolute; left: 0; top: 0; width: 100%; color: #000; padding: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="nav-bar">
+    <div class="nav-item active" id="tab-pos"><i>🛒</i>POS</div>
+    <div class="nav-item" id="tab-inv"><i>📊</i>STOCK</div>
+    <div class="nav-item" id="tab-logs"><i>📜</i>LOGS</div>
+    <div class="nav-item" id="tab-cfg"><i>⚙️</i>SET</div>
+</div>
+
+<div class="view active" id="view-pos">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2 id="disp-biz-name" style="margin:0; font-size:18px;">OmniPOS</h2>
+        <button id="trigger-scan" class="btn-sec">📷 SCANNER</button>
+    </div>
+    <div class="product-grid" id="grid"></div>
+</div>
+
+<div class="view" id="view-inv">
+    <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+        <button id="btn-add-modal" class="btn-sec">+ ADD ITEM</button>
+        <div>
+            <button id="btn-export" class="btn-sec">EXPORT</button>
+            <button id="btn-import-trigger" class="btn-sec">IMPORT</button>
+            <input type="file" id="import-file" style="display:none" accept=".csv">
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Item</th><th>Price</th><th>Stock</th><th>Code</th></tr></thead>
+            <tbody id="inv-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="view" id="view-logs">
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Ref</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="logs-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="view" id="view-cfg">
+    <h3>Receipt Branding</h3>
+    <input type="text" id="cfg-name" placeholder="Business Name (Header)" class="input-box">
+    <input type="text" id="cfg-sub" placeholder="Address/Contact (Sub-Header)" class="input-box">
+    <input type="text" id="cfg-foot" placeholder="Thank You Message (Footnote)" class="input-box">
+    <button id="cfg-save" class="btn-prime">SAVE SETTINGS</button>
+</div>
+
+<div class="drawer" id="cart-drawer">
+    <div class="drawer-head" id="drawer-handle">
+        <span>CART (<span id="cart-qty">0</span>)</span>
+        <span id="cart-total" style="color:var(--accent)">₱0.00</span>
+    </div>
+    <div class="drawer-content">
+        <input type="text" id="customer" placeholder="Customer Name" class="input-box">
+        <div id="cart-items" style="flex:1; overflow-y:auto; margin-bottom:15px;"></div>
+        <button id="btn-checkout" class="btn-prime">PROCESS & PRINT</button>
+        <button id="btn-clear" style="color:var(--danger); border:none; background:none; padding:15px; width:100%;">VOID CURRENT CART</button>
+    </div>
+</div>
+
+<div id="scan-overlay">
+    <div id="reader"></div>
+    <div class="scan-controls">
+        <button id="scan-stop" class="btn-prime" style="width:200px; background:var(--danger); color:#fff;">STOP SCANNER</button>
+    </div>
+</div>
+
+<div id="print-area">
+    <div style="text-align:center;">
+        <h2 id="p-head" style="margin:0;"></h2>
+        <p id="p-sub" style="margin:5px 0; font-size:10pt;"></p>
+        <p>--------------------------------</p>
+    </div>
+    <div id="p-list"></div>
+    <p>--------------------------------</p>
+    <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:14pt;">
+        <span>TOTAL</span><span id="p-total"></span>
+    </div>
+    <div style="text-align:center; margin-top:20px; font-size:9pt;">
+        <p id="p-foot"></p>
+        <p>Ref: #<span id="p-ref"></span> | <span id="p-date"></span></p>
+    </div>
+</div>
+
+<script>
+    let inventory = JSON.parse(localStorage.getItem('apex24_inv')) || [];
+    let logs = JSON.parse(localStorage.getItem('apex24_logs')) || [];
+    let config = JSON.parse(localStorage.getItem('apex24_cfg')) || { name: "OMNI APEX", sub: "Terminal 01", foot: "Please come again!", ref: 1001 };
+    let cart = [];
+    let scanner = null;
+    let loadingRef = null;
+
+    // iPhone Optimized Listener
+    function bind(id, fn) {
+        const el = typeof id === 'string' ? document.getElementById(id) : id;
+        if(el) el.addEventListener('pointerdown', (e) => { e.preventDefault(); fn(e); });
+    }
+
+    // --- Tab Controller ---
+    function showView(name) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        document.getElementById('view-'+name).classList.add('active');
+        document.getElementById('tab-'+name).classList.add('active');
+        if(name === 'inv') renderInv();
+        if(name === 'logs') renderLogs();
+    }
+
+    // --- POS Logic ---
+    function renderGrid() {
+        const grid = document.getElementById('grid');
+        grid.innerHTML = inventory.map((item, idx) => `
+            <div class="p-card" data-idx="${idx}">
+                <div class="p-stock">${item.stock}</div>
+                <img src="${item.img || 'https://via.placeholder.com/100'}">
+                <div class="p-info"><strong>${item.name}</strong><br>₱${item.price}</div>
+            </div>
+        `).join('');
+        document.querySelectorAll('.p-card').forEach(card => {
+            bind(card, () => {
+                const i = inventory[card.dataset.idx];
+                if(i.stock <= 0) return alert("Out of Stock");
+                addToCart(i);
+            });
+        });
+        document.getElementById('disp-biz-name').innerText = config.name;
+    }
+
+    function addToCart(item) {
+        const exist = cart.find(c => c.code === item.code);
+        if(exist) exist.qty++; else cart.push({...item, qty:1});
+        updateCartUI();
+        if(navigator.vibrate) navigator.vibrate(60);
+    }
+
+    function updateCartUI() {
+        let total = 0; let qty = 0;
+        document.getElementById('cart-items').innerHTML = cart.map((i, idx) => {
+            total += (i.price * i.qty); qty += i.qty;
+            return `<div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+                <div><strong>${i.name}</strong><br>₱${i.price} x ${i.qty}</div>
+                <div class="cart-remove" data-idx="${idx}" style="color:var(--danger); font-weight:bold;">REMOVE</div>
+            </div>`;
+        }).join('');
+        document.querySelectorAll('.cart-remove').forEach(b => bind(b, () => { cart.splice(b.dataset.idx, 1); updateCartUI(); }));
+        document.getElementById('cart-total').innerText = "₱" + total.toLocaleString();
+        document.getElementById('cart-qty').innerText = qty;
+    }
+
+    // --- Inventory Management ---
+    function renderInv() {
+        document.getElementById('inv-table').innerHTML = inventory.map((i, idx) => `
+            <tr>
+                <td><input class="input-box" style="margin:0; font-size:12px;" value="${i.name}" oninput="inventory[${idx}].name=this.value; save();"></td>
+                <td><input class="input-box" style="margin:0; font-size:12px;" type="number" value="${i.price}" oninput="inventory[${idx}].price=parseFloat(this.value); save();"></td>
+                <td><input class="input-box" style="margin:0; font-size:12px;" type="number" value="${i.stock}" oninput="inventory[${idx}].stock=parseInt(this.value); save();"></td>
+                <td><span style="font-size:10px; color:#8e8e93;">${i.code}</span><br><span class="inv-del" data-idx="${idx}" style="color:red; font-size:10px;">DELETE</span></td>
+            </tr>
+        `).join('');
+        document.querySelectorAll('.inv-del').forEach(b => bind(b, () => { if(confirm("Delete item?")){ inventory.splice(b.dataset.idx,1); save(); renderInv(); }}));
+    }
+
+    // --- History & Re-upload ---
+    function renderLogs() {
+        document.getElementById('logs-table').innerHTML = logs.map((l, idx) => `
+            <tr>
+                <td>#${l.id}</td><td>${l.total}</td>
+                <td style="color:${l.status==='VOID'?'red':'#32d74b'}">${l.status}</td>
+                <td>
+                    <button class="btn-sec log-re" data-idx="${idx}">RE-LOAD</button>
+                    <button class="btn-sec log-void" data-idx="${idx}" style="color:red">VOID</button>
+                </td>
+            </tr>
+        `).join('');
+        document.querySelectorAll('.log-re').forEach(b => bind(b, () => {
+            const l = logs[b.dataset.idx];
+            cart = [...l.items]; loadingRef = l.id;
+            document.getElementById('customer').value = l.customer;
+            updateCartUI(); showView('pos'); document.getElementById('cart-drawer').classList.add('open');
+        }));
+        document.querySelectorAll('.log-void').forEach(b => bind(b, () => {
+            const l = logs[b.dataset.idx];
+            if(l.status === 'VOID') return;
+            if(confirm("Void this sale? Stock will be returned.")) {
+                l.items.forEach(ci => {
+                    const item = inventory.find(i => i.code === ci.code);
+                    if(item) item.stock += ci.qty;
+                });
+                l.status = 'VOID'; save(); renderLogs();
+            }
+        }));
+    }
+
+    // --- Checkout & Printing ---
+    function checkout() {
+        if(cart.length === 0) return;
+        
+        // Auto-Update Stock
+        cart.forEach(c => {
+            const item = inventory.find(i => i.code === c.code);
+            if(item) item.stock -= c.qty;
+        });
+
+        const total = document.getElementById('cart-total').innerText;
+        const refId = loadingRef || config.ref++;
+        const now = new Date().toLocaleString();
+
+        const sale = { id: refId, customer: document.getElementById('customer').value || "Walk-in", total, date: now, items: [...cart], status: 'PAID' };
+        
+        if(loadingRef) {
+            const idx = logs.findIndex(l => l.id === loadingRef);
+            logs[idx] = sale;
+        } else {
+            logs.unshift(sale);
+        }
+
+        // Map to Print Template
+        document.getElementById('p-head').innerText = config.name;
+        document.getElementById('p-sub').innerText = config.sub;
+        document.getElementById('p-foot').innerText = config.foot;
+        document.getElementById('p-ref').innerText = refId;
+        document.getElementById('p-date').innerText = now;
+        document.getElementById('p-total').innerText = total;
+        document.getElementById('p-list').innerHTML = cart.map(i => `
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>${i.qty} x ${i.name}</span>
+                <span>${(i.qty*i.price).toFixed(2)}</span>
+            </div>`).join('');
+
+        save();
+        window.print();
+        cart = []; loadingRef = null;
+        document.getElementById('customer').value = "";
+        updateCartUI();
+        document.getElementById('cart-drawer').classList.remove('open');
+    }
+
+    function save() {
+        localStorage.setItem('apex24_inv', JSON.stringify(inventory));
+        localStorage.setItem('apex24_logs', JSON.stringify(logs));
+        localStorage.setItem('apex24_cfg', JSON.stringify(config));
+        renderGrid();
+    }
+
+    // --- Pro-Mode Scanner ---
+    async function startScan() {
+        document.getElementById('scan-overlay').style.display = 'flex';
+        if(!scanner) scanner = new Html5Qrcode("reader");
+        try {
+            await scanner.start({ facingMode: "environment" }, { fps: 25, qrbox: 250 }, (code) => {
+                const item = inventory.find(i => i.code === code);
+                if(item) {
+                    if(item.stock <= 0) return;
+                    addToCart(item);
+                }
+            });
+        } catch (err) { alert("Camera Denied"); stopScan(); }
+    }
+    function stopScan() { if(scanner) scanner.stop().then(() => document.getElementById('scan-overlay').style.display='none'); }
+
+    // --- CSV Functions ---
+    bind('btn-export', () => {
+        let csv = "Name,Price,Stock,Code\n" + inventory.map(i => `"${i.name}",${i.price},${i.stock},"${i.code}"`).join("\n");
+        const blob = new Blob([csv], {type: 'text/csv'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'OmniInventory.csv'; a.click();
+    });
+    bind('btn-import-trigger', () => document.getElementById('import-file').click());
+    document.getElementById('import-file').onchange = (e) => {
+        const reader = new FileReader();
+        reader.onload = (f) => {
+            const rows = f.target.result.split('\n').slice(1);
+            inventory = rows.map(r => {
+                const c = r.split(','); if(c.length < 4) return null;
+                return { name: c[0].replace(/"/g,''), price: parseFloat(c[1]), stock: parseInt(c[2]), code: c[3].replace(/"/g,''), img:'' };
+            }).filter(i => i !== null);
+            save(); renderInv(); alert("Import Complete!");
+        };
+        reader.readAsText(e.target.files[0]);
+    };
+
+    // --- Navigation & UI Binds ---
+    bind('tab-pos', () => showView('pos'));
+    bind('tab-inv', () => showView('inv'));
+    bind('tab-logs', () => showView('logs'));
+    bind('tab-cfg', () => showView('cfg'));
+    bind('drawer-handle', () => document.getElementById('cart-drawer').classList.toggle('open'));
+    bind('trigger-scan', startScan);
+    bind('scan-stop', stopScan);
+    bind('btn-checkout', checkout);
+    bind('btn-clear', () => { cart = []; loadingRef = null; updateCartUI(); });
+    bind('cfg-save', () => {
+        config.name = document.getElementById('cfg-name').value;
+        config.sub = document.getElementById('cfg-sub').value;
+        config.foot = document.getElementById('cfg-foot').value;
+        save(); alert("Settings Applied");
+    });
+    bind('btn-add-modal', () => {
+        const name = prompt("Item Name?");
+        const price = prompt("Price?");
+        const stock = prompt("Stock?");
+        const code = prompt("Barcode (Optional)");
+        if(name && price) {
+            inventory.push({ name, price: parseFloat(price), stock: parseInt(stock), code: code || Date.now().toString(), img: '' });
+            save(); renderInv();
+        }
+    });
+
+    window.onload = () => {
+        renderGrid();
+        document.getElementById('cfg-name').value = config.name;
+        document.getElementById('cfg-sub').value = config.sub;
+        document.getElementById('cfg-foot').value = config.foot;
+    };
+</script>
+</body>
+</html>
